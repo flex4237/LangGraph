@@ -22,6 +22,7 @@ async function main() {
     summary: result?.summary,
     changes: result?.changes,
     testResult: result?.testResult,
+    repositoryUrl: result?.repositoryUrl,
     commitUrl: result?.commitUrl,
     error: failure instanceof Error ? failure.message : failure ? String(failure) : undefined,
   });
@@ -35,6 +36,9 @@ async function main() {
   }
 
   console.log(`Plan:\n${result.plan}`);
+  if (result.repositoryUrl) {
+    console.log(`\nRepository: ${result.repositoryUrl}`);
+  }
   console.log(`\nChanges: ${result.changes.map((change) => change.path).join(", ")}`);
   console.log(`Summary: ${result.summary}`);
 

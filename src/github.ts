@@ -146,6 +146,33 @@ export class GitHubRepository {
     return commit.html_url;
   }
 
+  async createRepository(
+    description: string,
+  ): Promise<{ url: string; branch: string }> {
+    if (!this.token) {
+      throw new Error("GITHUB_TOKEN with repo creation permission is required.");
+    }
+
+    const { data: user } = await this.octokit.users.getAuthenticated();
+    if (user.login.toLowerCase() !== this.repository.owner.toLowerCase()) {
+      throw new Error(
+        `Creating repositories is currently supported for the authenticated user (${user.login}) only.`,
+      );
+    }
+
+    const { data: repository } = await this.octokit.repos.createForAuthenticatedUser({
+      name: this.repository.name,
+      description: description.slice(0, 350),
+      private: true,
+      auto_init: true,
+    });
+
+    return {
+      url: repository.html_url,
+      branch: repository.default_branch,
+    };
+  }
+
   private isSafeReadablePath(path: string): boolean {
     try {
       normalizeRepositoryPath(path);

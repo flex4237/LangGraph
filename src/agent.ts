@@ -9,17 +9,20 @@ import type {
   RepositoryFile,
   TestResult,
 } from "./types.js";
-import { runRepositoryTests } from "./workspace.js";
+import { runNewProjectTests, runRepositoryTests } from "./workspace.js";
 
 const MAX_ATTEMPTS = 2;
 const MAX_CHANGED_FILES = 12;
 const MAX_CHANGE_BYTES = 200_000;
+const MAX_PROJECT_FILES = 30;
+const MAX_PROJECT_BYTES = 1_000_000;
 
 const State = Annotation.Root({
   task: Annotation<string>(),
   repository: Annotation<Repository>(),
   branch: Annotation<string>(),
   push: Annotation<boolean>(),
+  createRepository: Annotation<boolean>(),
   github: Annotation<GitHubRepository>(),
   files: Annotation<RepositoryFile[]>({
     default: () => [],
@@ -57,6 +60,10 @@ const State = Annotation.Root({
     default: () => "",
     reducer: (_, value) => value,
   }),
+  repositoryUrl: Annotation<string>({
+    default: () => "",
+    reducer: (_, value) => value,
+  }),
 });
 
 const PlanSchema = z.object({
@@ -77,6 +84,19 @@ const ChangeSchema = z.object({
     .max(MAX_CHANGED_FILES),
 });
 
+const ProjectSchema = z.object({
+  summary: z.string(),
+  files: z
+    .array(
+      z.object({
+        path: z.string(),
+        content: z.string(),
+      }),
+    )
+    .min(2)
+    .max(MAX_PROJECT_FILES),
+});
+
 function createModel() {
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
@@ -93,6 +113,73 @@ export function createCodingAgent() {
   const model = createModel();
 
   const graph = new StateGraph(State)
+    .addNode("scaffold", async (state) => {
+      const projectModel = model.withStructuredOutput(ProjectSchema);
+      const result = await projectModel.invoke([
+        [
+          "system",
+          [
+            "Create a complete, small, runnable software project from scratch for the user's requirements.",
+            "Choose a simple, maintainable stack appropriate to the task. For a local business application, prefer a local SQLite database and avoid external cloud services unless requested.",
+            "Return full contents for every required source, configuration, documentation, and test file. Include a README with setup/run instructions and at least one automated test.",
+            "Supported test projects have a .sln file, an npm package.json with a safe `test` script of `node --test` (no pretest/posttest scripts), or a pyproject.toml using pytest.",
+            `Return at most ${MAX_PROJECT_FILES} files. Do not include dependencies' lockfiles, generated build outputs, secrets, environment files, .npmrc, .git paths, or GitHub Actions workflows.`,
+            "The project will be written to a temporary local directory and its tests will run before any GitHub repository is created.",
+          ].join(" "),
+        ],
+        [
+          "human",
+          [
+            `Project requirements: ${state.task}`,
+            `Attempt: ${state.attempt + 1} of ${MAX_ATTEMPTS}`,
+            state.changes.length
+              ? `Previous generated files:\n${JSON.stringify(state.changes)}`
+              : "",
+            state.testResult
+              ? `The previous test run failed. Fix the project and tests:\n${state.testResult.command}\n${state.testResult.output}`
+              : "",
+          ].filter(Boolean).join("\n\n"),
+        ],
+      ]);
+
+      if (result.files.length > MAX_PROJECT_FILES) {
+        throw new Error(`The generated project exceeds ${MAX_PROJECT_FILES} files.`);
+      }
+
+      const seenPaths = new Set<string>();
+      let totalBytes = 0;
+      const changes = result.files.map((file) => {
+        const path = normalizeRepositoryPath(file.path);
+        if (path.toLowerCase().startsWith(".github/workflows/")) {
+          throw new Error("Generated GitHub Actions workflows are not allowed.");
+        }
+        if (path.toLowerCase() === ".npmrc") {
+          throw new Error("Generated npm configuration files are not allowed.");
+        }
+        if (/(\.lock|lock\.json)$/i.test(path)) {
+          throw new Error(`Generated dependency lockfiles are not allowed: ${path}`);
+        }
+        if (seenPaths.has(path)) {
+          throw new Error(`The generated project contains a duplicate path: ${path}`);
+        }
+        seenPaths.add(path);
+        const size = Buffer.byteLength(file.content, "utf8");
+        if (size > MAX_CHANGE_BYTES) {
+          throw new Error(`Generated file is too large: ${path}`);
+        }
+        totalBytes += size;
+        if (totalBytes > MAX_PROJECT_BYTES) {
+          throw new Error("The generated project exceeds the 1 MB size limit.");
+        }
+        return { path, content: file.content };
+      });
+
+      return {
+        summary: result.summary,
+        changes,
+        attempt: state.attempt + 1,
+      };
+    })
     .addNode("inspect", async (state) => {
       const files = await state.github.listFiles(state.branch);
       return { files };
@@ -171,12 +258,17 @@ export function createCodingAgent() {
       };
     })
     .addNode("test", async (state) => {
-      const testResult = await runRepositoryTests(
-        state.github,
-        state.branch,
-        state.changes,
-      );
+      const testResult = state.createRepository
+        ? await runNewProjectTests(state.changes)
+        : await runRepositoryTests(state.github, state.branch, state.changes);
       return { testResult };
+    })
+    .addNode("createRemoteRepository", async (state) => {
+      const created = await state.github.createRepository(state.summary);
+      return {
+        branch: created.branch,
+        repositoryUrl: created.url,
+      };
     })
     .addNode("publishChanges", async (state) => {
       const result = state.testResult;
@@ -191,17 +283,27 @@ export function createCodingAgent() {
       return { commitUrl };
     })
     .addNode("finish", async () => ({}))
-    .addEdge(START, "inspect")
+    .addConditionalEdges(START, (state) =>
+      state.createRepository ? "scaffold" : "inspect",
+    )
+    .addEdge("scaffold", "test")
     .addEdge("inspect", "createPlan")
     .addEdge("createPlan", "read")
     .addEdge("read", "implement")
     .addEdge("implement", "test")
     .addConditionalEdges("test", (state) => {
       if (state.testResult?.exitCode === 0) {
+        if (state.createRepository && state.push) {
+          return "createRemoteRepository";
+        }
         return state.push ? "publishChanges" : "finish";
       }
-      return state.attempt < MAX_ATTEMPTS ? "implement" : "finish";
+      if (state.attempt < MAX_ATTEMPTS) {
+        return state.createRepository ? "scaffold" : "implement";
+      }
+      return "finish";
     })
+    .addEdge("createRemoteRepository", "publishChanges")
     .addEdge("publishChanges", "finish")
     .addEdge("finish", END)
     .compile();
@@ -214,6 +316,7 @@ export async function runCodingTask(options: {
   repository: Repository;
   branch: string;
   push: boolean;
+  createRepository: boolean;
   github: GitHubRepository;
 }) {
   const agent = createCodingAgent();

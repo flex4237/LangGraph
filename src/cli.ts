@@ -5,6 +5,7 @@ export interface Options {
   branch: string;
   task: string;
   push: boolean;
+  createRepository: boolean;
 }
 
 export function parseArguments(
@@ -13,6 +14,7 @@ export function parseArguments(
 ): Options {
   const values = new Map<string, string>();
   let push = true;
+  let createRepository = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -24,8 +26,24 @@ export function parseArguments(
       push = false;
       continue;
     }
+    if (argument === "--create-repo") {
+      createRepository = true;
+      if (values.has("--repo")) {
+        throw new Error("Use either --repo or --create-repo, not both.");
+      }
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error("Expected a value after --create-repo.");
+      }
+      values.set("--repo", value);
+      index += 1;
+      continue;
+    }
     if (!["--repo", "--branch", "--task"].includes(argument)) {
       throw new Error(`Unknown argument: ${argument}`);
+    }
+    if (argument === "--repo" && createRepository) {
+      throw new Error("Use either --repo or --create-repo, not both.");
     }
     const value = args[index + 1];
     if (!value || value.startsWith("--")) {
@@ -39,16 +57,28 @@ export function parseArguments(
   const task = values.get("--task");
   if (!repoValue || !task) {
     throw new Error(
-      'Usage: npm run agent -- --repo owner/name --task "..." [--branch main] [--no-push]',
+      'Usage: npm run agent -- (--repo owner/name | --create-repo owner/name) --task "..." [--branch main] [--no-push]',
     );
   }
   const parts = repoValue.split("/");
-  if (parts.length !== 2 || parts.some((part) => !/^[A-Za-z0-9_.-]+$/.test(part))) {
+  if (
+    parts.length !== 2 ||
+    parts.some(
+      (part) =>
+        !/^[A-Za-z0-9_.-]+$/.test(part) ||
+        part.startsWith(".") ||
+        part.endsWith(".") ||
+        part.endsWith(".git"),
+    )
+  ) {
     throw new Error("Repository must use owner/name format.");
   }
 
-  if (push && !hasGitHubToken) {
+  if ((push || createRepository) && !hasGitHubToken) {
     throw new Error("GITHUB_TOKEN with contents:write permission is required to push.");
+  }
+  if (createRepository && !push) {
+    throw new Error("Creating a GitHub repository requires publishing; --no-push is not supported.");
   }
 
   return {
@@ -56,5 +86,6 @@ export function parseArguments(
     branch: values.get("--branch") ?? "main",
     task,
     push,
+    createRepository,
   };
 }

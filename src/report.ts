@@ -12,6 +12,7 @@ export interface RunReportInput {
   summary?: string;
   changes?: FileChange[];
   testResult?: TestResult | null;
+  repositoryUrl?: string;
   commitUrl?: string;
   error?: string;
 }
@@ -72,6 +73,9 @@ export async function writeRunReport(
     "",
     "## Commit",
     "",
+    ...(input.repositoryUrl
+      ? [`Repository created: ${input.repositoryUrl}`, ""]
+      : []),
     input.commitUrl ? input.commitUrl : "No commit was created.",
     ...(input.error ? ["", "## Error", "", input.error] : []),
     "",

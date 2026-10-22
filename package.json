@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test test/paths.test.ts test/cli.test.ts test/report.test.ts",
+    "test": "node --import tsx --test test/paths.test.ts test/cli.test.ts test/report.test.ts test/workspace.test.ts",
     "agent": "tsx src/index.ts"
   },
   "dependencies": {

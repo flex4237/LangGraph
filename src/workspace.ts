@@ -25,21 +25,38 @@ export async function runRepositoryTests(
     await extractArchive(archive, extractedDirectory);
     const root = await findRepositoryRoot(extractedDirectory);
 
-    for (const change of changes) {
-      const safePath = normalizeRepositoryPath(change.path);
-      const destination = path.resolve(root, safePath);
-      if (!destination.startsWith(`${root}${path.sep}`)) {
-        throw new Error(`Change path escapes the temporary workspace: ${change.path}`);
-      }
-      const directory = path.dirname(destination);
-      await mkdir(directory, { recursive: true });
-      await writeFile(destination, change.content, "utf8");
-    }
-
-    const testCommand = await detectTestCommand(root);
-    return await executeTest(testCommand.command, testCommand.args, root);
+    await writeChanges(root, changes);
+    return await executeProjectTests(root, false);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+export async function runNewProjectTests(
+  changes: FileChange[],
+): Promise<TestResult> {
+  const temporaryDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "langgraph-new-project-"),
+  );
+
+  try {
+    await writeChanges(temporaryDirectory, changes);
+    return await executeProjectTests(temporaryDirectory, true);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+async function writeChanges(root: string, changes: FileChange[]): Promise<void> {
+  for (const change of changes) {
+    const safePath = normalizeRepositoryPath(change.path);
+    const destination = path.resolve(root, safePath);
+    if (!destination.startsWith(`${root}${path.sep}`)) {
+      throw new Error(`Change path escapes the temporary workspace: ${change.path}`);
+    }
+    const directory = path.dirname(destination);
+    await mkdir(directory, { recursive: true });
+    await writeFile(destination, change.content, "utf8");
   }
 }
 
@@ -75,15 +92,16 @@ async function findRepositoryRoot(extractedDirectory: string): Promise<string> {
   return extractedDirectory;
 }
 
-async function detectTestCommand(
+async function executeProjectTests(
   root: string,
-): Promise<{ command: string; args: string[] }> {
+  generatedProject: boolean,
+): Promise<TestResult> {
   const entries = await readdir(root, { withFileTypes: true });
   const solution = entries.find(
     (entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".sln"),
   );
   if (solution) {
-    return { command: "dotnet", args: ["test", solution.name] };
+    return executeTest("dotnet", ["test", solution.name], root);
   }
 
   const packageJson = entries.find(
@@ -94,27 +112,67 @@ async function detectTestCommand(
       await readFile(path.join(root, packageJson.name), "utf8"),
     ) as { scripts?: Record<string, string> };
     if (manifest.scripts?.test) {
+      if (generatedProject) {
+        const scripts = manifest.scripts;
+        if (
+          scripts.pretest ||
+          scripts.posttest ||
+          !/^node(?:\.exe)?\s+--test(?:\s+[\w./*-]+)?$/.test(scripts.test)
+        ) {
+          throw new Error(
+            "Generated npm projects must use `node --test` and must not define pretest or posttest scripts.",
+          );
+        }
+        if (!(await hasNodeTestFiles(root))) {
+          throw new Error("Generated Node.js projects must include at least one test file.");
+        }
+      }
       const lockfileExists = entries.some(
         (entry) =>
           entry.isFile() &&
           ["package-lock.json", "npm-shrinkwrap.json"].includes(entry.name),
       );
-      if (lockfileExists) {
-        await executeTest("npm", ["ci", "--ignore-scripts"], root);
-      } else {
-        await executeTest("npm", ["install", "--ignore-scripts"], root);
+      const installResult = lockfileExists
+        ? await executeTest("npm", ["ci", "--ignore-scripts"], root)
+        : await executeTest("npm", ["install", "--ignore-scripts"], root);
+      if (installResult.exitCode !== 0) {
+        return installResult;
       }
-      return { command: "npm", args: ["test"] };
+      if (generatedProject) {
+        return executeTest(
+          process.execPath,
+          manifest.scripts.test.split(/\s+/).slice(1),
+          root,
+        );
+      }
+      return executeTest("npm", ["test"], root);
     }
   }
 
   if (entries.some((entry) => entry.isFile() && entry.name === "pyproject.toml")) {
-    return { command: "python", args: ["-m", "pytest"] };
+    return executeTest("python", ["-m", "pytest"], root);
   }
 
   throw new Error(
     "No supported test entry point found (solution, npm test script, or pyproject.toml).",
   );
+}
+
+async function hasNodeTestFiles(directory: string): Promise<boolean> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isFile() && /\.(test|spec)\.(js|mjs|cjs)$/i.test(entry.name)) {
+      return true;
+    }
+    if (
+      entry.isDirectory() &&
+      entry.name !== "node_modules" &&
+      (await hasNodeTestFiles(path.join(directory, entry.name)))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function executeTest(
@@ -123,11 +181,32 @@ function executeTest(
   cwd: string,
 ): Promise<TestResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const npmExecPath = process.env.npm_execpath;
+    const useWindowsNpmFallback =
+      command === "npm" && process.platform === "win32" && !npmExecPath;
+    const spawnCommand =
+      command === "npm" && process.platform === "win32" && npmExecPath
+        ? process.execPath
+        : useWindowsNpmFallback
+          ? process.env.ComSpec ?? "cmd.exe"
+          : command;
+    const spawnArgs =
+      spawnCommand === process.execPath && command === "npm" && npmExecPath
+        ? [npmExecPath, ...args]
+        : useWindowsNpmFallback
+          ? ["/d", "/s", "/c", `npm.cmd ${args.join(" ")}`]
+          : args;
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      CI: "true",
+      DOTNET_NOLOGO: "1",
+    };
+    delete env.NODE_TEST_CONTEXT;
+    const child = spawn(spawnCommand, spawnArgs, {
       cwd,
       shell: false,
       windowsHide: true,
-      env: { ...process.env, CI: "true", DOTNET_NOLOGO: "1" },
+      env,
     });
 
     let output = "";
