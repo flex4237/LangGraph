@@ -1,15 +1,15 @@
 # LangGraph GitHub Coding Agent
 
 A TypeScript CLI agent that uses LangGraph and Gemini Flash to inspect a GitHub
-repository, propose code changes, run its tests locally, and optionally commit
-the tested changes directly to a branch through the GitHub API. It does not
-clone repositories.
+repository, propose code changes, run its tests locally, and commit tested
+changes directly to a branch through the GitHub API. It does not clone
+repositories.
 
 ## Requirements
 
 - Node.js 20+
-- A GitHub token with contents write access to use `--push` (public repositories
-  can be read without a token).
+- A GitHub token with contents write access to push changes (public repositories
+  can be read without a token when using `--no-push`).
 - A Google AI Studio API key for the Gemini Flash free tier. Create one at
   [Google AI Studio](https://aistudio.google.com/apikey).
 - The repository's test runtime (for example, the .NET SDK for `dotnet test`).
@@ -28,11 +28,11 @@ npm test
 npm run agent -- --repo flex4237/Validot --branch main --task "Add a focused unit test for [describe the behavior]"
 ```
 
-By default, the agent does not write to GitHub. To apply its generated changes
-as one commit after tests pass:
+By default, the agent commits its changes to the requested branch after tests
+pass. Use `--no-push` for a dry run that only reports the proposed changes:
 
 ```sh
-npm run agent -- --repo owner/repository --branch main --task "..." --push
+npm run agent -- --repo owner/repository --branch main --task "..." --no-push
 ```
 
 The agent downloads a temporary GitHub source archive for testing (not a git
@@ -42,5 +42,5 @@ projects with a `test` script, and Python projects using pytest. Commands are
 selected from repository manifests; the model cannot choose arbitrary shell
 commands. A failed test run prevents a push.
 
-Keep `--push` for deliberate, reviewed tasks. Protect important branches with
-GitHub branch protection and use a least-privilege token.
+Protect important branches with GitHub branch protection and use a
+least-privilege token.
