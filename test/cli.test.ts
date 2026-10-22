@@ -44,6 +44,24 @@ describe("parseArguments", () => {
     assert.throws(() => parseArguments([...args, "--no-push"], true), /requires publishing/);
   });
 
+  it("uses GitHub's default branch for a new repository", () => {
+    assert.throws(
+      () =>
+        parseArguments(
+          [
+            "--create-repo",
+            "flex4237/accounting-app",
+            "--branch",
+            "main",
+            "--task",
+            "Build an app",
+          ],
+          true,
+        ),
+      /default branch configured in GitHub/,
+    );
+  });
+
   it("does not allow both an existing and new repository target", () => {
     assert.throws(
       () =>

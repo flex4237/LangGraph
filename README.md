@@ -44,11 +44,12 @@ npm run agent -- --create-repo flex4237/accounting-app --task "Build an app for 
 ```
 
 New-repository mode currently creates repositories for the authenticated GitHub
-user (not organizations). `GITHUB_TOKEN` must have permission to create
-repositories and write their contents. The project is generated and tested in
-a temporary directory before the repository is created, so failed tests do not
-create an empty GitHub repository. Generated projects may use a .NET solution,
-Node.js with `node --test`, or Python with pytest.
+user (not organizations), using that account's configured default branch.
+`GITHUB_TOKEN` must have permission to create repositories and write their
+contents. The project is generated and tested in a temporary directory before
+the repository is created, so failed tests do not create an empty GitHub
+repository. Generated projects may use a .NET solution, Node.js with
+`node --test`, or Python with pytest.
 
 The agent downloads a temporary GitHub source archive for testing (not a git
 clone), overlays its proposed changes, and removes the temporary workspace

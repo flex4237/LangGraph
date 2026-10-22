@@ -80,6 +80,11 @@ export function parseArguments(
   if (createRepository && !push) {
     throw new Error("Creating a GitHub repository requires publishing; --no-push is not supported.");
   }
+  if (createRepository && values.has("--branch")) {
+    throw new Error(
+      "New repositories use the default branch configured in GitHub; --branch is only supported with --repo.",
+    );
+  }
 
   return {
     repository: { owner: parts[0]!, name: parts[1]! },
