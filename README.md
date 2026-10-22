@@ -42,5 +42,10 @@ projects with a `test` script, and Python projects using pytest. Commands are
 selected from repository manifests; the model cannot choose arbitrary shell
 commands. A failed test run prevents a push.
 
+Each valid agent run writes a Markdown report under `reports/` in the local
+agent project. Reports include the task, plan, changed paths, test output, and
+commit link or error. They are local-only and are not committed to the target
+repository.
+
 Protect important branches with GitHub branch protection and use a
 least-privilege token.
