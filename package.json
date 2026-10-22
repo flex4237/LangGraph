@@ -1,1 +1,25 @@
-{"name":"langgraph-github-coding-agent","private":true}
+{
+  "name": "langgraph-github-coding-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/paths.test.ts",
+    "agent": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.2.20",
+    "@langchain/google-genai": "^2.3.4",
+    "@langchain/langgraph": "^1.5.2",
+    "@octokit/rest": "^21.1.1",
+    "dotenv": "^16.4.7",
+    "fflate": "^0.8.3",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
